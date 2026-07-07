@@ -3,7 +3,8 @@ import streamlit as st
 from dotenv import load_dotenv
 from streamlit.web.server.server_util import allowlisted_origins
 
-from utils.whisper_transcriber import transcribe_audio
+from utils.whisper_transcriber import transcribe_audio_with_segments
+from utils.diarization import diarize_audio, build_speaker_transcript
 from utils.gpt_summarizer import summarize_and_format
 from utils.pdf_generator import create_mom_pdf
 from utils.vector_rag import MeetingRAG
@@ -43,16 +44,22 @@ if audio_file:
     with open(save_path, "wb") as f:
         f.write(audio_file.read())
 
-    with st.spinner("📝 Transcribing audio..."):
-        transcript = transcribe_audio(save_path)
 
-    st.session_state.meeting_transcripts[audio_file.name] = {
-        "path": save_path,
-        "transcript": transcript,
-        "summary": None,
-        "speaker_transcript": None,
-        "pdf_path": None
-    }
+with st.spinner("📝 Transcribing audio..."):
+    whisper_result = transcribe_audio_with_segments(save_path)
+    transcript = whisper_result["text"]
+
+with st.spinner("🗣️ Identifying speakers..."):
+    diarization_turns = diarize_audio(save_path)
+    speaker_transcript = build_speaker_transcript(whisper_result["segments"], diarization_turns)
+
+st.session_state.meeting_transcripts[audio_file.name] = {
+    "path": save_path,
+    "transcript": transcript,
+    "summary": None,
+    "speaker_transcript": speaker_transcript,
+    "pdf_path": None
+}
     st.session_state.current_meeting = audio_file.name
     selected_file = audio_file.name
 
@@ -79,14 +86,6 @@ if selected_file and selected_file != "None":
     # Tab 2: Speaker Transcript
     with tab2:
         st.header("🗣️ Transcript with Speaker Tags")
-        if not meeting_data["speaker_transcript"]:
-            speaker_lines = transcript.split(". ")
-            formatted = "\n".join([
-                f"Speaker {i%2+1}: {line.strip()}" for i, line in enumerate(speaker_lines)
-            ])
-            meeting_data["speaker_transcript"] = formatted
-        st.text_area("Transcript", meeting_data["speaker_transcript"], height=400)
-        st.download_button("📥 Download Transcript", meeting_data["speaker_transcript"], file_name="transcript.txt")
 
     # Tab 3: Chat with Memory
     with tab3:
